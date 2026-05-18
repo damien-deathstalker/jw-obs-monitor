@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "jw-obs-monitor"
+version = "0.1.0"
+description = "A Python application that monitors the JW Library display and transitions scenes in OBS Studio."
+authors = ["Your Name <youremail@example.com>"]
+license = "MIT"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+opencv-python = "^4.5.3"
+Pillow = "^8.2.0"
+websocket-client = "^1.2.1"
+pygetwindow = "^0.0.9"
+pyautogui = "^0.9.53"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

@@ -1,0 +1,10 @@
+opencv-python
+Pillow
+pygetwindow
+pyautogui
+pywin32
+numpy
+pytest
+mss
+obsws-python
+flet
