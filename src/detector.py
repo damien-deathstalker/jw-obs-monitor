@@ -14,6 +14,7 @@ try:
 except Exception:
     ImageStat = None
 
+from config import BASELINE_RMS_DELTA
 from obs_controller import OBSController
 
 logger = logging.getLogger("jw-obs-worker")
@@ -21,7 +22,8 @@ logger = logging.getLogger("jw-obs-worker")
 
 class DetectorWorker(threading.Thread):
     def __init__(self, monitor_obj, media_scene, threshold, presence_req, absence_req, poll_interval,
-                 obs_controller=None, obs_host=None, obs_port=None, obs_password=None, update_cb=None):
+                 obs_controller=None, obs_host=None, obs_port=None, obs_password=None, update_cb=None,
+                 baseline_rms=None, baseline_rms_delta=BASELINE_RMS_DELTA):
         super().__init__(daemon=True)
         self.monitor = monitor_obj
         self.media_scene = media_scene
@@ -30,6 +32,8 @@ class DetectorWorker(threading.Thread):
         self.absence_req = absence_req
         self.poll_interval = poll_interval
         self.update_cb = update_cb
+        self.baseline_rms = baseline_rms
+        self.baseline_rms_delta = baseline_rms_delta
         self._stop_event = threading.Event()
         self.obs_controller = obs_controller
         if self.obs_controller is not None:
@@ -43,6 +47,10 @@ class DetectorWorker(threading.Thread):
         self._baseline_bright = None
         self._baseline_samples = []
         self._baseline_sample_target = 5
+
+        if self.baseline_rms is not None:
+            self._baseline_rms = float(self.baseline_rms)
+            self._baseline_set = True
 
     def stop(self):
         self._stop_event.set()
@@ -121,23 +129,24 @@ class DetectorWorker(threading.Thread):
             def stats_indicate_media():
                 if rms >= self.threshold:
                     return True
-                if not self._baseline_set or mean is None:
+                if not self._baseline_set:
                     return False
-                if rms >= (self._baseline_rms + 7):
+                if self._baseline_rms is not None and rms >= (self._baseline_rms + self.baseline_rms_delta):
                     return True
-                if mean >= (self._baseline_mean + 12):
+                if mean is not None and self._baseline_mean is not None and mean >= (self._baseline_mean + 12):
                     return True
-                if bright_frac is not None and bright_frac >= (self._baseline_bright + 0.08):
+                if bright_frac is not None and self._baseline_bright is not None and bright_frac >= (self._baseline_bright + 0.08):
                     return True
                 return False
 
             def stats_indicate_default():
                 if not self._baseline_set or mean is None:
                     return False
-                if rms <= (self._baseline_rms + 5) and mean <= (self._baseline_mean + 8):
-                    if bright_frac is None:
-                        return True
-                    return bright_frac <= (self._baseline_bright + 0.05)
+                if self._baseline_rms is not None and rms <= (self._baseline_rms + 5):
+                    if self._baseline_mean is None or mean <= (self._baseline_mean + 8):
+                        if bright_frac is None or self._baseline_bright is None:
+                            return True
+                        return bright_frac <= (self._baseline_bright + 0.05)
                 return False
 
             present = stats_indicate_media()

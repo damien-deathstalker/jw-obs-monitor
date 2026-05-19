@@ -26,7 +26,7 @@ except Exception:
 
 # Assuming these exist in your project:
 from config import (
-    RMS_THRESHOLD, PRESENCE_FRAMES_REQUIRED, ABSENCE_FRAMES_REQUIRED, POLL_INTERVAL,
+    RMS_THRESHOLD, BASELINE_RMS_DELTA, PRESENCE_FRAMES_REQUIRED, ABSENCE_FRAMES_REQUIRED, POLL_INTERVAL,
     OBS_HOST, OBS_PORT, OBS_PASSWORD,
 )
 from screen_monitor import ScreenMonitor, WindowMonitor
@@ -41,7 +41,7 @@ class App:
     def __init__(self, page: ft.Page):
         self.page = page
         self.page.title = "JW OBS Monitor"
-        self.page.theme_mode = ft.ThemeMode.DARK
+        self.page.theme_mode = ft.ThemeMode.SYSTEM
         self.page.padding = 20
         self.page.window_width = 900
         self.page.window_height = 700
@@ -49,10 +49,12 @@ class App:
         self.worker = None
         self.obs_controller = None
         self.preview_monitor = None
+        self.preview_rms = None
+        self.baseline_rms = None
 
         self._build_ui()
         self._load_obs_config()
-        self._update_ui(None)
+        self._update_ui()
 
     def _build_ui(self):
         # --- LEFT COLUMN: Configuration ---
@@ -72,6 +74,7 @@ class App:
         self.exact_match = ft.Checkbox(label="Exact title match", value=False)
         self.scene_name = ft.TextField(label="Media scene name", value="Media", expand=True, height=50)
         self.threshold = ft.TextField(label="RMS threshold", value=str(RMS_THRESHOLD), width=150, height=50)
+        self.baseline_delta = ft.TextField(label="Baseline RMS delta", value=str(BASELINE_RMS_DELTA), width=150, height=50)
 
         capture_card = ft.Card(
             content=ft.Container(
@@ -82,7 +85,8 @@ class App:
                     ft.Row([self.monitor_idx, self.window_title]),
                     self.exact_match,
                     ft.Divider(),
-                    ft.Row([self.scene_name, self.threshold])
+                    ft.Row([self.scene_name, self.threshold]),
+                    ft.Row([self.baseline_delta])
                 ])
             )
         )
@@ -125,7 +129,7 @@ class App:
             content=ft.Container(
                 padding=15,
                 content=ft.Column([
-                    ft.Text("Dashboard", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text("Monitoring", size=18, weight=ft.FontWeight.BOLD),
                     ft.Row([self.start_btn, self.stop_btn]),
                     ft.Divider(),
                     ft.Text("Status:", weight=ft.FontWeight.BOLD),
@@ -137,7 +141,7 @@ class App:
 
         # Preview Area
         self.preview_image = ft.Image(
-            src=self.preview_monitor.is_media_displayed()[1] if self.preview_monitor else None,
+            src=self.preview_monitor,
             width=320,
             height=180,
             fit=ft.BoxFit.CONTAIN,
@@ -157,13 +161,21 @@ class App:
             ])
         )
 
+        self.preview_rms_text = ft.Text("Preview RMS: -", size=13, color=ft.Colors.GREY_400)
+        self.baseline_rms_text = ft.Text("Baseline RMS: -", size=13, color=ft.Colors.GREY_400)
+
         preview_card = ft.Card(
             content=ft.Container(
                 padding=15,
                 content=ft.Column([
                     ft.Text("Capture Preview", size=18, weight=ft.FontWeight.BOLD),
                     preview_box,
-                    ft.Button("Preview Capture", icon=ft.Icons.CAMERA_ALT, on_click=self._preview_capture)
+                    ft.Row([
+                        ft.FilledButton("Preview Capture", icon=ft.Icons.CAMERA_ALT, on_click=self._preview_capture),
+                        ft.FilledButton("Set baseline", icon=ft.Icons.SAVE, on_click=self._set_baseline),
+                    ], spacing=10),
+                    self.preview_rms_text,
+                    self.baseline_rms_text,
                 ])
             )
         )
@@ -182,9 +194,13 @@ class App:
     # --- UI Helpers ---
     def _show_toast(self, message, is_error=False):
         color = ft.Colors.RED_600 if is_error else ft.Colors.GREEN_600
-        self.page.show_snack_bar(ft.SnackBar(ft.Text(message), bgcolor=color))
+        try:
+            self.page.bottom_appbar = ft.SnackBar(ft.Text(message), bgcolor=color, open=True)
+            self.page.update()
+        except Exception:
+            print(message)
 
-    def _update_ui(self, e):
+    def _update_ui(self):
         method = self.capture_var.value
         if method == "monitor":
             self.monitor_idx.disabled = False
@@ -202,7 +218,10 @@ class App:
         cfg = {
             'obs_host': self.obs_host.value.strip(),
             'obs_port': self.obs_port.value.strip(),
-            'obs_password': self.obs_password.value
+            'obs_password': self.obs_password.value,
+            'threshold': self.threshold.value.strip(),
+            'baseline_rms': self.baseline_rms,
+            'baseline_rms_delta': self.baseline_delta.value.strip(),
         }
         try:
             p = self._obs_config_path()
@@ -225,9 +244,17 @@ class App:
                 self.obs_port.value = str(cfg.get('obs_port', self.obs_port.value))
             if 'obs_password' in cfg:
                 self.obs_password.value = cfg.get('obs_password', self.obs_password.value)
+            if 'threshold' in cfg:
+                self.threshold.value = str(cfg.get('threshold', self.threshold.value))
+            if 'baseline_rms' in cfg and cfg.get('baseline_rms') is not None:
+                self.baseline_rms = float(cfg['baseline_rms'])
+                self.baseline_rms_text.value = f"Baseline RMS: {self.baseline_rms:.2f}"
+            if 'baseline_rms_delta' in cfg:
+                self.baseline_delta.value = str(cfg.get('baseline_rms_delta', self.baseline_delta.value))
             
             self.obs_status_var.value = f"Loaded OBS config from {p}"
             self.obs_status_var.color = ft.Colors.GREY_400
+            self.page.update()
         except Exception as err:
             logger.exception('Failed to load OBS config: %s', err)
 
@@ -237,12 +264,12 @@ class App:
         try:
             if method == "monitor":
                 idx = int(self.monitor_idx.value)
-                self.preview_monitor = ScreenMonitor(monitor_index=idx, scale=0.25).is_media_displayed()[1]
+                self.preview_monitor = ScreenMonitor(monitor_index=idx, scale=0.25)
             else:
                 title = self.window_title.value.strip()
                 if not title:
                     raise ValueError("Please enter a window title")
-                self.preview_monitor = WindowMonitor(window_title=title, scale=0.25, exact=self.exact_match.value).is_media_displayed()[1]
+                self.preview_monitor = WindowMonitor(window_title=title, scale=0.25, exact=self.exact_match.value)
             return True
         except Exception as err:
             self.preview_monitor = None
@@ -253,6 +280,19 @@ class App:
         if not self._prepare_preview_monitor():
             return
         self._refresh_preview()
+
+    def _set_baseline(self, e):
+        if self.preview_monitor is None and not self._prepare_preview_monitor():
+            return
+
+        try:
+            rms, _ = self.preview_monitor.is_media_displayed()
+            self.baseline_rms = rms
+            self.baseline_rms_text.value = f"Baseline RMS: {rms:.2f}"
+            self._show_toast("Baseline RMS saved from preview")
+            self.page.update()
+        except Exception as err:
+            self._show_toast(f"Failed to set baseline: {err}", is_error=True)
 
     def _connect_obs(self, e):
         host = self.obs_host.value.strip() or "localhost"
@@ -281,19 +321,20 @@ class App:
         if self.preview_monitor is None or not _PIL_AVAILABLE:
             self.preview_placeholder.visible = True
             self.preview_image.visible = False
+            self.preview_rms_text.value = "Preview RMS: -"
             self.page.update()
             return
 
         try:
-            img = self.preview_monitor
+            rms, img = self.preview_monitor.is_media_displayed()
+            self.preview_rms = rms
+            self.preview_rms_text.value = f"Preview RMS: {rms:.2f}"
             if img is not None:
-                print(f"Preview image size: {img.size}, mode: {img.mode}")
-                # Resize and convert PIL image to base64 for Flet to display
                 preview = img.resize((320, 180), Image.BILINEAR)
                 buffered = BytesIO()
                 preview.save(buffered, format="PNG")
                 img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                
+
                 self.preview_image.src = img_str
                 self.preview_image.visible = True
                 self.preview_placeholder.visible = False
@@ -304,7 +345,7 @@ class App:
             self._show_toast(f"Preview unavailable: {err}", is_error=True)
             self.preview_placeholder.visible = True
             self.preview_image.visible = False
-            
+            self.preview_rms_text.value = "Preview RMS: -"
         self.page.update()
 
     def _status_update(self, data):
@@ -386,6 +427,12 @@ class App:
             return
         obs_password = self.obs_password.value
 
+        try:
+            baseline_delta = float(self.baseline_delta.value)
+        except Exception:
+            self._show_toast("Invalid baseline delta", is_error=True)
+            return
+
         self.worker = DetectorWorker(
             monitor_obj=monitor_obj,
             media_scene=scene,
@@ -397,6 +444,8 @@ class App:
             obs_host=obs_host,
             obs_port=obs_port,
             obs_password=obs_password,
+            baseline_rms=self.baseline_rms,
+            baseline_rms_delta=baseline_delta,
             update_cb=self._status_update,
         )
         self.worker.start()

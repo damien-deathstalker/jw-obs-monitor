@@ -8,3 +8,4 @@ pytest
 mss
 obsws-python
 flet
+pyinstaller

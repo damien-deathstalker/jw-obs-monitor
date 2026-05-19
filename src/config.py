@@ -7,6 +7,7 @@ CAPTURE_SCALE = 0.25         # scale factor for captures to speed up processing
 
 # Image difference / RMS thresholding
 RMS_THRESHOLD = 15.0         # RMS threshold to consider that "something" is being displayed
+BASELINE_RMS_DELTA = 7.0      # additional RMS above baseline to trigger media detection
 PRESENCE_FRAMES_REQUIRED = 3 # consecutive frames required to declare media present
 ABSENCE_FRAMES_REQUIRED = 5  # consecutive frames required to declare media gone
 POLL_INTERVAL = 1          # seconds between captures
