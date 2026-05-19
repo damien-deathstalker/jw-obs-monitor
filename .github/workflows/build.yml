@@ -29,6 +29,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pyinstaller
+        # Ensure flet desktop runtime package is available so PyInstaller
+        # can bundle it into the executable (prevents runtime pip install attempts)
+        pip install flet-desktop || pip install flet_desktop || true
 
     # 4. Package the application
     - name: Build executable

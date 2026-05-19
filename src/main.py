@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import Path
 
 import flet as ft
+import flet_desktop
 
 try:
     from PIL import Image

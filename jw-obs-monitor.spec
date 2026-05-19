@@ -3,16 +3,22 @@
 from PyInstaller.utils.hooks import collect_data_files
 
 flet_datas = collect_data_files('flet')
+try:
+    flet_desktop_datas = collect_data_files('flet_desktop')
+except Exception:
+    flet_desktop_datas = []
+
+datas_list = flet_datas + flet_desktop_datas
 
 a = Analysis(
     ['src\\main.py'],
     pathex=[],
     binaries=[],
-    datas=flet_datas,
-    hiddenimports=[],
+    datas=datas_list,
+    hiddenimports=['flet_desktop'],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['src/pyinstaller_hooks/hook-flet-pip-disable.py'],
     excludes=[],
     noarchive=False,
     optimize=0,
