@@ -1,13 +1,16 @@
-name: Build Executable
+name: Run Tests
 
 on:
+  pull_request:
+    branches:
+      - master
   push:
     branches:
       - master
   workflow_dispatch:
 
 jobs:
-  build:
+  test:
     runs-on: windows-latest
 
     steps:
@@ -26,13 +29,3 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
-
-      - name: Build executable
-        run: pyinstaller jw-obs-monitor.spec
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: JW-OBS-Monitor-Windows
-          path: dist/
-          if-no-files-found: error

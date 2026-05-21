@@ -14,10 +14,84 @@ try:
 except Exception:
     ImageStat = None
 
-from config import BASELINE_RMS_DELTA
-from obs_controller import OBSController
+try:
+    from .config import BASELINE_RMS_DELTA
+    from .obs_controller import OBSController
+except ImportError:
+    from config import BASELINE_RMS_DELTA
+    from obs_controller import OBSController
 
 logger = logging.getLogger("jw-obs-worker")
+
+
+def image_stats(img):
+    if img is None:
+        return None, None
+    if _NP_AVAILABLE:
+        try:
+            arr = np.asarray(img.convert("L"), dtype=np.uint8)
+            return float(arr.mean()), float((arr > 200).sum()) / float(arr.size)
+        except Exception:
+            logger.exception("Failed to calculate numpy image stats")
+            return None, None
+
+    if ImageStat is None:
+        return None, None
+
+    try:
+        gray = img.convert("L")
+        stat = ImageStat.Stat(gray)
+        data = list(gray.getdata())
+        total = len(data)
+        bright = sum(1 for v in data if v > 200)
+        bright_frac = float(bright) / float(total) if total > 0 else 0.0
+        return float(stat.mean[0]), bright_frac
+    except Exception:
+        logger.exception("Failed to calculate PIL image stats")
+        return None, None
+
+
+def stats_indicate_media(
+    rms,
+    threshold,
+    baseline_set=False,
+    baseline_rms=None,
+    baseline_rms_delta=BASELINE_RMS_DELTA,
+    mean=None,
+    baseline_mean=None,
+    bright_frac=None,
+    baseline_bright=None,
+):
+    if rms >= threshold:
+        return True
+    if not baseline_set:
+        return False
+    if baseline_rms is not None and rms >= (baseline_rms + baseline_rms_delta):
+        return True
+    if mean is not None and baseline_mean is not None and mean >= (baseline_mean + 12):
+        return True
+    if bright_frac is not None and baseline_bright is not None and bright_frac >= (baseline_bright + 0.08):
+        return True
+    return False
+
+
+def stats_indicate_default(
+    rms,
+    baseline_set=False,
+    baseline_rms=None,
+    mean=None,
+    baseline_mean=None,
+    bright_frac=None,
+    baseline_bright=None,
+):
+    if not baseline_set or mean is None:
+        return False
+    if baseline_rms is not None and rms <= (baseline_rms + 5):
+        if baseline_mean is None or mean <= (baseline_mean + 8):
+            if bright_frac is None or baseline_bright is None:
+                return True
+            return bright_frac <= (baseline_bright + 0.05)
+    return False
 
 
 class DetectorWorker(threading.Thread):
@@ -81,30 +155,7 @@ class DetectorWorker(threading.Thread):
         while not self.stopped():
             try:
                 rms, img = self.monitor.is_media_displayed()
-                mean = None
-                bright_frac = None
-                if img is not None:
-                    if _NP_AVAILABLE:
-                        try:
-                            arr = np.asarray(img.convert('L'), dtype=np.uint8)
-                            mean = float(arr.mean())
-                            bright_frac = float((arr > 200).sum()) / float(arr.size)
-                        except Exception:
-                            mean = None
-                            bright_frac = None
-                    else:
-                        try:
-                            if ImageStat is not None:
-                                gray = img.convert('L')
-                                stat = ImageStat.Stat(gray)
-                                mean = float(stat.mean[0])
-                                data = list(gray.getdata())
-                                total = len(data)
-                                bright = sum(1 for v in data if v > 200)
-                                bright_frac = float(bright) / float(total) if total > 0 else 0.0
-                        except Exception:
-                            mean = None
-                            bright_frac = None
+                mean, bright_frac = image_stats(img)
             except Exception as e:
                 logger.debug("Capture error: %s", e)
                 rms = 0.0
@@ -124,38 +175,36 @@ class DetectorWorker(threading.Thread):
                         self._baseline_bright = sum(b for _, _, b in self._baseline_samples) / len(self._baseline_samples)
                         self._baseline_set = True
                 except Exception:
-                    pass
+                    logger.exception("Failed to update baseline samples")
 
-            def stats_indicate_media():
-                if rms >= self.threshold:
-                    return True
-                if not self._baseline_set:
-                    return False
-                if self._baseline_rms is not None and rms >= (self._baseline_rms + self.baseline_rms_delta):
-                    return True
-                if mean is not None and self._baseline_mean is not None and mean >= (self._baseline_mean + 12):
-                    return True
-                if bright_frac is not None and self._baseline_bright is not None and bright_frac >= (self._baseline_bright + 0.08):
-                    return True
-                return False
-
-            def stats_indicate_default():
-                if not self._baseline_set or mean is None:
-                    return False
-                if self._baseline_rms is not None and rms <= (self._baseline_rms + 5):
-                    if self._baseline_mean is None or mean <= (self._baseline_mean + 8):
-                        if bright_frac is None or self._baseline_bright is None:
-                            return True
-                        return bright_frac <= (self._baseline_bright + 0.05)
-                return False
-
-            present = stats_indicate_media()
+            present = stats_indicate_media(
+                rms=rms,
+                threshold=self.threshold,
+                baseline_set=self._baseline_set,
+                baseline_rms=self._baseline_rms,
+                baseline_rms_delta=self.baseline_rms_delta,
+                mean=mean,
+                baseline_mean=self._baseline_mean,
+                bright_frac=bright_frac,
+                baseline_bright=self._baseline_bright,
+            )
+            default_visible = stats_indicate_default(
+                rms=rms,
+                baseline_set=self._baseline_set,
+                baseline_rms=self._baseline_rms,
+                mean=mean,
+                baseline_mean=self._baseline_mean,
+                bright_frac=bright_frac,
+                baseline_bright=self._baseline_bright,
+            )
 
             if present:
                 presence_count += 1
                 absence_count = 0
-            else:
+            elif default_visible or media_active:
                 absence_count += 1
+                presence_count = 0
+            else:
                 presence_count = 0
 
             # notifications
@@ -193,7 +242,14 @@ class DetectorWorker(threading.Thread):
 
         # cleanup
         try:
-            self.obs.disconnect()
+            if self.obs_controller is None:
+                self.obs.disconnect()
         except Exception:
-            pass
+            logger.exception("Failed to disconnect OBS")
+        try:
+            close = getattr(self.monitor, "close", None)
+            if close:
+                close()
+        except Exception:
+            logger.exception("Failed to close monitor")
         self._notify(status="Stopped")
