@@ -7,19 +7,21 @@ except Exception:
 
 
 class OBSController:
-    def __init__(self, host="localhost", port=4455, password=""):
+    def __init__(self, host="localhost", port=4455, password="", client_factory=None):
         self.host = host
         self.port = port
         self.password = password
         self.client = None
         self.prev_scene = None
+        self.client_factory = client_factory
         self.logger = logging.getLogger("OBSController")
 
     def connect(self):
-        if not _HAS_OWP:
+        if self.client_factory is None and not _HAS_OWP:
             raise RuntimeError("obsws_python library not available. Install obsws-python")
         try:
-            self.client = obs.ReqClient(host=self.host, port=self.port, password=self.password)
+            factory = self.client_factory or obs.ReqClient
+            self.client = factory(host=self.host, port=self.port, password=self.password)
             self.logger.info("Connected to OBS WebSocket at %s:%s", self.host, self.port)
         except Exception as e:
             self.logger.exception("Failed to connect to OBS: %s", e)
@@ -57,18 +59,21 @@ class OBSController:
             raise
 
     def switch_to_media_scene(self, media_scene):
-        try:
-            current = self.get_current_scene()
+        if not media_scene:
+            return
+        current = self.get_current_scene()
+        if current:
             self.prev_scene = current
-        except Exception:
-            self.prev_scene = None
-        if media_scene:
-            self.client.set_current_program_scene(media_scene)
+        self.set_scene(media_scene)
+
+    def transition_scene(self, scene_name):
+        self.set_scene(scene_name)
+        return True
 
     def revert_scene(self):
         if self.prev_scene:
             try:
-                self.client.set_current_program_scene(self.prev_scene)
+                self.set_scene(self.prev_scene)
             except Exception:
                 self.logger.exception("Failed to revert to previous scene")
             finally:

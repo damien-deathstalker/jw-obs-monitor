@@ -17,8 +17,3 @@ def detect_media_content(pil_image, threshold=15.0):
     for your environment.
     """
     return rms_of_image(pil_image) >= threshold
-
-
-def process_image(image):
-    # Implement image processing logic here
-    pass

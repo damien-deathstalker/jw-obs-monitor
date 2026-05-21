@@ -1,5 +1,3 @@
-from time import time
-
 try:
     from PIL import Image
 except ImportError:
@@ -31,6 +29,9 @@ class ScreenMonitor:
         if np is None:
             raise RuntimeError("Screen capture requires numpy")
         self.sct = mss.mss()
+
+    def close(self):
+        self.sct.close()
 
     def _grab_scaled(self):
         monitors = self.sct.monitors
@@ -94,6 +95,9 @@ class WindowMonitor:
         self.scale = scale
         self.exact = exact
         self.sct = mss.mss()
+
+    def close(self):
+        self.sct.close()
 
     def _find_window_rect(self):
         """Find a top-level window whose title matches the configured substring.
